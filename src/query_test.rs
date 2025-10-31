@@ -5,7 +5,7 @@ mod query_test {
 
     #[test]
     fn test_simple() {
-        let query = r#"{
+        let json = r#"{
     "WHERE":{
        "GT":{
           "sections_avg":97
@@ -19,7 +19,7 @@ mod query_test {
        "ORDER":"sections_avg"
     }
 } "#;
-        let deserialized: Query = serde_json::from_str(&query).unwrap();
+        let deserialized: Query = serde_json::from_str(&json).unwrap();
         let expected: HashMap<String, f64> = [("sections_avg".to_string(), 97f64)]
             .iter()
             .cloned()
@@ -76,5 +76,59 @@ mod query_test {
 } "#;
         let query: Query = serde_json::from_str(&json).unwrap();
         assert_eq!(format!("{:?}", query), r#"Query { where: Some(OR { or: [AND { and: [GT { gt: {"ubc_avg": 90.0} }, IS { is: {"ubc_dept": "adhe"} }] }, EQ { eq: {"ubc_avg": 95.0} }] }), options: Options { columns: ["ubc_dept", "ubc_id", "ubc_avg"], order: Some("ubc_avg") } }"#);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_no_options() {
+        let json = r#"{
+    "WHERE":{
+       "GT":{
+          "sections_avg":97
+       }
+    }
+} "#;
+        serde_json::from_str::<Query>(&json).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_cmp_string() {
+        let json = r#"{
+    "WHERE":{
+       "GT":{
+          "sections_avg": "adhe"
+       }
+    },
+    "OPTIONS":{
+       "COLUMNS":[
+          "sections_dept",
+          "sections_avg"
+       ],
+       "ORDER":"sections_avg"
+    }
+} "#;
+        serde_json::from_str::<Query>(&json).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_unknown_fields() {
+        let json = r#"{
+    "WHERE":{
+       "GT":{
+          "sections_avg": "adhe"
+       }
+    },
+    "OPTIONS":{
+       "COLUMNS":[
+          "sections_dept",
+          "sections_avg"
+       ],
+       "ORDER":"sections_avg"
+    },
+    "HAVING": "blank"
+} "#;
+        serde_json::from_str::<Query>(&json).unwrap();
     }
 }
