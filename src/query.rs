@@ -4,23 +4,40 @@ use crate::errors::EngineError;
 use crate::errors::EngineError::ResultToLargeError;
 use ordered_float::OrderedFloat;
 use serde::Deserialize;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 
-type Func<'a> = Box<dyn Fn(&Course) -> Result<bool, Box<dyn Error>> + 'a>;
+type FilterFunc<'a> = Box<dyn Fn(&Course) -> Result<bool, Box<dyn Error>> + 'a>;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "UPPERCASE")]
 pub struct Query {
     pub r#where: Option<Filter>,
     pub options: Options,
+    pub transformations: Option<Transformations>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "UPPERCASE")]
+pub struct Transformations {
+    pub group: Vec<String>,
+    pub apply: Vec<HashMap<String, String>>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "UPPERCASE")]
 pub struct Options {
     pub columns: Vec<String>,
-    pub order: Option<String>,
+    #[serde(flatten)]
+    pub order: Option<Order>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum Order {
+    ONE(String),
+    MANY { dir: String, keys: Vec<String> },
 }
 
 #[derive(Deserialize, Debug)]
@@ -56,7 +73,7 @@ pub enum Filter {
     },
 }
 
-fn parse_and(and: &'_ Vec<Filter>) -> Func<'_> {
+fn parse_and(and: &'_ Vec<Filter>) -> FilterFunc<'_> {
     let filters: Vec<_> = and.iter().map(|filter| parse_filter(filter)).collect();
     Box::new(move |course| {
         for filter in filters.iter() {
@@ -68,7 +85,7 @@ fn parse_and(and: &'_ Vec<Filter>) -> Func<'_> {
     })
 }
 
-fn parse_or(or: &'_ Vec<Filter>) -> Func<'_> {
+fn parse_or(or: &'_ Vec<Filter>) -> FilterFunc<'_> {
     let filters: Vec<_> = or.iter().map(|filter| parse_filter(filter)).collect();
     Box::new(move |course| {
         for filter in filters.iter() {
@@ -98,7 +115,7 @@ fn parse_comparison(
     }
 }
 
-fn parse_filter(filter: &'_ Filter) -> Func<'_> {
+fn parse_filter(filter: &'_ Filter) -> FilterFunc<'_> {
     match filter {
         Filter::AND { and } => parse_and(and),
         Filter::OR { or } => parse_or(or),
@@ -125,6 +142,71 @@ fn parse_filter(filter: &'_ Filter) -> Func<'_> {
             }
         }),
     }
+}
+
+macro_rules! sort {
+    ($key:ident, $a:ident, $b:ident) => {
+        $a.get($key)
+            .unwrap()
+            .partial_cmp($b.get($key).unwrap())
+            .unwrap()
+    };
+}
+
+fn handle_order(
+    order: &Order,
+    columns_result: &mut Vec<BTreeMap<String, Value>>,
+) -> Result<(), Box<dyn Error>> {
+    match order {
+        Order::ONE(order) => {
+            let all_have_column = columns_result.iter().all(|row| row.contains_key(order));
+
+            if !all_have_column {
+                return Err(format!("Order column '{}' not found in results", order).into());
+            }
+            columns_result.sort_by(|a, b| sort!(order, a, b));
+        }
+        Order::MANY { dir, keys } => {
+            let reverse = match dir.as_str() {
+                "UP" => false,
+                "DOWN" => true,
+                _ => {
+                    return Err(format!("Invalid ordering {}, expected UP or DOWN", dir).into());
+                }
+            };
+            for key in keys.iter() {
+                for row in columns_result.iter() {
+                    if !row.contains_key(key) {
+                        return Err(format!("Key {} not found", key).into());
+                    }
+                }
+            }
+
+            let sort_funcs: Vec<_> = keys
+                .iter()
+                .map(|key| {
+                    Box::new(|a: &BTreeMap<String, Value>, b: &BTreeMap<String, Value>| {
+                        if reverse {
+                            sort!(key, b, a)
+                        } else {
+                            sort!(key, a, b)
+                        }
+                    })
+                })
+                .collect();
+
+            columns_result.sort_by(|a, b| {
+                for sort_func in sort_funcs.iter() {
+                    match sort_func(a, b) {
+                        Ordering::Equal => continue,
+                        other => return other,
+                    }
+                }
+                Ordering::Equal
+            });
+        }
+    }
+    Ok(())
 }
 
 pub fn execute_query(
@@ -157,17 +239,7 @@ pub fn execute_query(
     }
 
     if let Some(order) = &query.options.order {
-        let all_have_column = columns_result.iter().all(|row| row.contains_key(order));
-
-        if !all_have_column {
-            return Err(format!("Order column '{}' not found in results", order).into());
-        }
-        columns_result.sort_by(|a, b| {
-            a.get(order)
-                .unwrap()
-                .partial_cmp(b.get(order).unwrap())
-                .unwrap()
-        });
+        handle_order(order, &mut columns_result)?;
     }
 
     Ok(columns_result)

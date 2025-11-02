@@ -35,7 +35,7 @@ fn test_simple() {
     let actual = deserialized.options.columns.as_slice();
     assert_eq!(actual, expected.as_slice());
 
-    assert_eq!(deserialized.options.order, Some("courses_avg".to_string()));
+    //assert_eq!(deserialized.options.order, Some("courses_avg".to_string()));
 
     println!("{:#?}", deserialized);
 

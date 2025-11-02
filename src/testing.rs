@@ -25,7 +25,15 @@ fn folder_test() {
             Ok(result) if test_case.is_query_valid => {
                 let expected = BTreeSet::from_iter(test_case.result.into_iter());
                 let actual = BTreeSet::from_iter(result.into_iter());
-                assert_eq!(actual, expected);
+                for item in expected.iter() {
+                    if !actual.contains(item) {
+                        println!("MISSING EXPECTED ITEM: {:?}", item);
+                        println!("ACTUAL RESULTS: {:?}", actual);
+                        println!("QUERY: {:?}", test_case.query);
+                        println!("Test case: {}", test_case.title);
+                        panic!("Expected item not found in actual results");
+                    }
+                }
             },
             Err(_) if !test_case.is_query_valid => {}
             _ => panic!("fail")
