@@ -1,9 +1,10 @@
 use crate::dataset::Value::{Num, Str};
-use crate::dataset::{Course, Value};
+use crate::dataset::{Course, EPSILON, Value};
 use crate::errors::EngineError;
 use crate::errors::EngineError::ResultToLargeError;
+use ordered_float::OrderedFloat;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 
 type Func<'a> = Box<dyn Fn(&Course) -> Result<bool, Box<dyn Error>> + 'a>;
@@ -39,15 +40,15 @@ pub enum Filter {
     },
     LT {
         #[serde(rename = "LT")]
-        lt: HashMap<String, f32>,
+        lt: HashMap<String, OrderedFloat<f32>>,
     },
     GT {
         #[serde(rename = "GT")]
-        gt: HashMap<String, f32>,
+        gt: HashMap<String, OrderedFloat<f32>>,
     },
     EQ {
         #[serde(rename = "EQ")]
-        eq: HashMap<String, f32>,
+        eq: HashMap<String, OrderedFloat<f32>>,
     },
     IS {
         #[serde(rename = "IS")]
@@ -80,9 +81,9 @@ fn parse_or(or: &'_ Vec<Filter>) -> Func<'_> {
 }
 
 fn parse_comparison(
-    args: &HashMap<String, f32>,
+    args: &HashMap<String, OrderedFloat<f32>>,
     course: &Course,
-    predicate: impl FnOnce(f32, f32) -> bool,
+    predicate: impl FnOnce(OrderedFloat<f32>, OrderedFloat<f32>) -> bool,
     op: &'static str,
 ) -> Result<bool, Box<dyn Error>> {
     let (col, val) = args.iter().next().unwrap();
@@ -109,7 +110,7 @@ fn parse_filter(filter: &'_ Filter) -> Func<'_> {
             Box::new(move |course| parse_comparison(&gt, &course, |a, b| a > b, "gt"))
         }
         Filter::EQ { eq } => Box::new(move |course| {
-            parse_comparison(&eq, &course, |a, b| (a - b).abs() < 1e-4, "eq")
+            parse_comparison(&eq, &course, |a, b| (a - b).abs() < EPSILON, "eq")
         }),
         Filter::IS { is } => Box::new(move |course| {
             let (col, val) = is.iter().next().unwrap();
@@ -129,7 +130,7 @@ fn parse_filter(filter: &'_ Filter) -> Func<'_> {
 pub fn execute_query(
     query: &Query,
     dataset: &Vec<Course>,
-) -> Result<Vec<HashMap<String, Value>>, Box<dyn Error>> {
+) -> Result<Vec<BTreeMap<String, Value>>, Box<dyn Error>> {
     let filter = query
         .r#where
         .as_ref()
@@ -141,18 +142,32 @@ pub fn execute_query(
         if filter(course)? {
             filter_result.push(course.clone());
             if filter_result.len() > 5000 {
-                return Err(ResultToLargeError.into())
+                return Err(ResultToLargeError.into());
             }
         }
     }
 
     let mut columns_result = vec![];
     for course in filter_result.drain(..) {
-        let mut new = HashMap::new();
+        let mut new = BTreeMap::new();
         for column in query.options.columns.iter() {
             new.insert(column.clone(), course.get(column)?);
         }
         columns_result.push(new);
+    }
+
+    if let Some(order) = &query.options.order {
+        let all_have_column = columns_result.iter().all(|row| row.contains_key(order));
+
+        if !all_have_column {
+            return Err(format!("Order column '{}' not found in results", order).into());
+        }
+        columns_result.sort_by(|a, b| {
+            a.get(order)
+                .unwrap()
+                .partial_cmp(b.get(order).unwrap())
+                .unwrap()
+        });
     }
 
     Ok(columns_result)

@@ -1,13 +1,17 @@
 use macros::FieldGetter;
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io;
 use std::io::Read;
 use zip::ZipArchive;
 
-#[derive(Serialize, Debug)]
+pub const EPSILON: f32 = 1e-4;
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[serde(untagged)]
 pub enum Value {
-    Num(f32),
+    Num(OrderedFloat<f32>),
     Str(String),
 }
 
@@ -17,17 +21,18 @@ pub(crate) struct CourseFile {
 }
 
 #[derive(Debug, FieldGetter, Clone)]
+#[field_prefix("courses_")]
 pub struct Course {
     pub uuid: String,
     pub id: String,
     pub title: String,
     pub instructor: String,
     pub dept: String,
-    pub year: f32,
-    pub avg: f32,
-    pub pass: f32,
-    pub fail: f32,
-    pub audit: f32,
+    pub year: OrderedFloat<f32>,
+    pub avg: OrderedFloat<f32>,
+    pub pass: OrderedFloat<f32>,
+    pub fail: OrderedFloat<f32>,
+    pub audit: OrderedFloat<f32>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -84,10 +89,10 @@ pub fn load_dataset(file: &str) -> Result<Vec<Course>, io::Error> {
             instructor: course.instructor.clone(),
             dept: course.dept.clone(),
             year: course.year.parse().unwrap(),
-            avg: course.avg,
-            pass: course.pass,
-            fail: course.fail,
-            audit: course.audit,
+            avg: OrderedFloat::from(course.avg),
+            pass: OrderedFloat::from(course.pass),
+            fail: OrderedFloat::from(course.fail),
+            audit: OrderedFloat::from(course.audit),
         })
         .collect())
 }

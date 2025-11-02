@@ -1,40 +1,47 @@
+use crate::dataset::load_dataset;
+use crate::query::{Filter, Query, execute_query};
+use ordered_float::OrderedFloat;
 use std::collections::HashMap;
-use crate::query::{Filter, Query};
 
 #[test]
 fn test_simple() {
     let json = r#"{
     "WHERE":{
        "GT":{
-          "sections_avg":97
+          "courses_avg":97
        }
     },
     "OPTIONS":{
        "COLUMNS":[
-          "sections_dept",
-          "sections_avg"
+          "courses_dept",
+          "courses_avg"
        ],
-       "ORDER":"sections_avg"
+       "ORDER":"courses_avg"
     }
 } "#;
     let deserialized: Query = serde_json::from_str(&json).unwrap();
-    let expected: HashMap<String, f32> = [("sections_avg".to_string(), 97f32)]
-        .iter()
-        .cloned()
-        .collect();
+    let expected: HashMap<String, OrderedFloat<f32>> =
+        [("courses_avg".to_string(), OrderedFloat::from(97f32))]
+            .iter()
+            .cloned()
+            .collect();
     let actual = match deserialized.r#where.as_ref().unwrap() {
         Filter::GT { gt: g } => g,
         _ => panic!("not gt"),
     };
     assert_eq!(*actual, expected);
 
-    let expected = ["sections_dept".to_string(), "sections_avg".to_string()];
+    let expected = ["courses_dept".to_string(), "courses_avg".to_string()];
     let actual = deserialized.options.columns.as_slice();
     assert_eq!(actual, expected.as_slice());
 
-    assert_eq!(deserialized.options.order, Some("sections_avg".to_string()));
+    assert_eq!(deserialized.options.order, Some("courses_avg".to_string()));
 
     println!("{:#?}", deserialized);
+
+    let dataset = load_dataset("pair.zip").unwrap();
+    let result = execute_query(&deserialized, &dataset);
+    println!("result {:#?}", result)
 }
 
 #[test]
@@ -46,37 +53,41 @@ fn test_complex() {
              "AND":[
                 {
                    "GT":{
-                      "ubc_avg":90
+                      "courses_avg":90
                    }
                 },
                 {
                    "IS":{
-                      "ubc_dept":"adhe"
+                      "courses_dept":"adhe"
                    }
                 }
              ]
           },
           {
              "EQ":{
-                "ubc_avg":95
+                "courses_avg":95
              }
           }
        ]
     },
     "OPTIONS":{
        "COLUMNS":[
-          "ubc_dept",
-          "ubc_id",
-          "ubc_avg"
+          "courses_dept",
+          "courses_id",
+          "courses_avg"
        ],
-       "ORDER":"ubc_avg"
+       "ORDER":"courses_avg"
     }
 } "#;
     let query: Query = serde_json::from_str(&json).unwrap();
     assert_eq!(
         format!("{:?}", query),
-        r#"Query { where: Some(OR { or: [AND { and: [GT { gt: {"ubc_avg": 90.0} }, IS { is: {"ubc_dept": "adhe"} }] }, EQ { eq: {"ubc_avg": 95.0} }] }), options: Options { columns: ["ubc_dept", "ubc_id", "ubc_avg"], order: Some("ubc_avg") } }"#
+        r#"Query { where: Some(OR { or: [AND { and: [GT { gt: {"courses_avg": 90.0} }, IS { is: {"courses_dept": "adhe"} }] }, EQ { eq: {"courses_avg": 95.0} }] }), options: Options { columns: ["courses_dept", "courses_id", "courses_avg"], order: Some("courses_avg") } }"#
     );
+
+    let dataset = load_dataset("pair.zip").unwrap();
+    let result = execute_query(&query, &dataset);
+    println!("{:#?}", result);
 }
 
 #[test]
@@ -85,7 +96,7 @@ fn test_no_options() {
     let json = r#"{
     "WHERE":{
        "GT":{
-          "sections_avg":97
+          "courses_avg":97
        }
     }
 } "#;
@@ -98,15 +109,15 @@ fn test_cmp_string() {
     let json = r#"{
     "WHERE":{
        "GT":{
-          "sections_avg": "adhe"
+          "courses_avg": "adhe"
        }
     },
     "OPTIONS":{
        "COLUMNS":[
-          "sections_dept",
-          "sections_avg"
+          "courses_dept",
+          "courses_avg"
        ],
-       "ORDER":"sections_avg"
+       "ORDER":"courses_avg"
     }
 } "#;
     serde_json::from_str::<Query>(&json).unwrap();
@@ -118,15 +129,15 @@ fn test_unknown_fields() {
     let json = r#"{
     "WHERE":{
        "GT":{
-          "sections_avg": "adhe"
+          "courses_avg": "adhe"
        }
     },
     "OPTIONS":{
        "COLUMNS":[
-          "sections_dept",
-          "sections_avg"
+          "courses_dept",
+          "courses_avg"
        ],
-       "ORDER":"sections_avg"
+       "ORDER":"courses_avg"
     },
     "HAVING": "blank"
 } "#;

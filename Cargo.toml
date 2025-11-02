@@ -8,3 +8,5 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 zip = "6.0.0"
 macros = { path = "./macros" }
+prompted = "0.2.8"
+ordered-float = { version = "5.1.0", features = ["serde"] }

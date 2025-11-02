@@ -2,10 +2,13 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
 
-#[proc_macro_derive(FieldGetter)]
+#[proc_macro_derive(FieldGetter, attributes(field_prefix))]
 pub fn field_getter_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
+
+    // Extract the prefix from attributes
+    let prefix = extract_prefix(&input.attrs).unwrap_or_else(|| "".to_string());
 
     // Extract fields from the struct
     let fields = match &input.data {
@@ -22,11 +25,14 @@ pub fn field_getter_derive(input: TokenStream) -> TokenStream {
         let field_name_str = field_name.to_string();
         let field_type = &field.ty;
 
+        // Create the prefixed field name
+        let prefixed_name = format!("{}{}", prefix, field_name_str);
+
         // Determine how to convert the field to Value
         let conversion = generate_conversion(field_type, quote!(self.#field_name));
 
         quote! {
-            #field_name_str => {
+            #prefixed_name => {
                 Ok(#conversion)
             }
         }
@@ -38,13 +44,37 @@ pub fn field_getter_derive(input: TokenStream) -> TokenStream {
             pub fn get(&self, field_name: &str) -> Result<Value, String> {
                 match field_name {
                     #(#match_arms)*
-                    _ => Err(field_name.to_string()),
+                    _ => Err(format!("Field '{}' not found. Fields must start with prefix '{}'", field_name, #prefix)),
                 }
             }
         }
     };
 
     TokenStream::from(expanded)
+}
+
+// Extract prefix from attributes - Updated for syn 2.0
+fn extract_prefix(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("field_prefix") {
+            // Parse the attribute value
+            if let Ok(value) = attr.parse_args::<syn::LitStr>() {
+                return Some(value.value());
+            }
+            // Also try parsing as name = value
+            if let Ok(expr) = attr.parse_args::<syn::Expr>() {
+                if let syn::Expr::Assign(assign) = expr {
+                    if let syn::Expr::Lit(syn::ExprLit {
+                                              lit: syn::Lit::Str(lit_str),
+                                              ..
+                                          }) = &*assign.right {
+                        return Some(lit_str.value());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 // Helper function to generate conversion based on type
