@@ -1,11 +1,10 @@
 use crate::dataset::Value::{Num, Str};
 use crate::dataset::{Course, EPSILON, Value};
-use crate::errors::EngineError;
-use crate::errors::EngineError::ResultToLargeError;
+use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use serde::Deserialize;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 
 type FilterFunc<'a> = Box<dyn Fn(&Course) -> Result<bool, Box<dyn Error>> + 'a>;
@@ -22,7 +21,7 @@ pub struct Query {
 #[serde(rename_all = "UPPERCASE")]
 pub struct Transformations {
     pub group: Vec<String>,
-    pub apply: Vec<HashMap<String, String>>,
+    pub apply: Vec<HashMap<String, HashMap<String, String>>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -76,24 +75,24 @@ pub enum Filter {
 fn parse_and(and: &'_ Vec<Filter>) -> FilterFunc<'_> {
     let filters: Vec<_> = and.iter().map(|filter| parse_filter(filter)).collect();
     Box::new(move |course| {
-        for filter in filters.iter() {
-            if !filter(course)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(filters
+            .iter()
+            .map(|filter| filter(course))
+            .collect::<Result<Vec<bool>, _>>()?
+            .into_iter()
+            .all(|b| b))
     })
 }
 
 fn parse_or(or: &'_ Vec<Filter>) -> FilterFunc<'_> {
     let filters: Vec<_> = or.iter().map(|filter| parse_filter(filter)).collect();
     Box::new(move |course| {
-        for filter in filters.iter() {
-            if filter(course)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(filters
+            .iter()
+            .map(|filter| filter(course))
+            .collect::<Result<Vec<bool>, _>>()?
+            .into_iter()
+            .any(|b| b))
     })
 }
 
@@ -106,12 +105,8 @@ fn parse_comparison(
     let (col, val) = args.iter().next().unwrap();
     match course.get(col) {
         Ok(Num(i)) => Ok(predicate(i, *val)),
-        Ok(_) => Err(EngineError::TypeError {
-            operation: op,
-            field: col.clone(),
-        }
-        .into()),
-        Err(e) => Err(EngineError::FieldNotFound(e).into()),
+        Ok(_) => Err(format!("Operation {} is not valid for {}", op, col).into()),
+        Err(_) => Err(format!("Field {} does not exist", col).into()),
     }
 }
 
@@ -133,12 +128,8 @@ fn parse_filter(filter: &'_ Filter) -> FilterFunc<'_> {
             let (col, val) = is.iter().next().unwrap();
             match course.get(col) {
                 Ok(Str(s)) => Ok(s == *val),
-                Ok(_) => Err(EngineError::TypeError {
-                    operation: "is",
-                    field: col.clone(),
-                }
-                .into()),
-                Err(_) => Err(EngineError::FieldNotFound(col.clone()).into()),
+                Ok(_) => Err(format!(r#"Operation "is" is not valid for {}"#, col).into()),
+                Err(_) => Err(format!("Field {} does not exist", col).into()),
             }
         }),
     }
@@ -151,6 +142,75 @@ macro_rules! sort {
             .partial_cmp($b.get($key).unwrap())
             .unwrap()
     };
+}
+
+fn handle_aggregate(
+    func: impl Fn(OrderedFloat<f32>, OrderedFloat<f32>) -> OrderedFloat<f32>,
+    op: &'static str,
+    column: &String,
+    data: &Vec<&BTreeMap<String, Value>>,
+) -> Result<OrderedFloat<f32>, Box<dyn Error>> {
+    let mut init = OrderedFloat(0.0);
+    for item in data {
+        let Num(num) = item
+            .get(column)
+            .ok_or_else(|| format!("Column {} does not exist", column))?
+        else {
+            return Err(format!("Invalid operation {} on column {}", op, column).into());
+        };
+        init = func(init, *num)
+    }
+    Ok(init)
+}
+
+fn handle_transformations(
+    transformations: &Transformations,
+    columns_result: &Vec<BTreeMap<String, Value>>,
+) -> Result<(), Box<dyn Error>> {
+    for column in columns_result.iter() {
+        for transformation in transformations.group.iter() {
+            if !column.contains_key(transformation) {
+                return Err(format!("Unknown group {}", transformation).into());
+            }
+        }
+    }
+    let mut grouped = columns_result.iter().into_group_map_by(|course| {
+        transformations
+            .group
+            .iter()
+            .map(|group| (group, course.get(group).unwrap()))
+            .collect::<BTreeMap<_, _>>()
+    });
+
+    let mut output = vec![];
+    for (mut group, items) in grouped.drain() {
+        let n = OrderedFloat(items.len() as f32);
+        for aggregate in transformations.apply.iter() {
+            let (apply_key, inner) = aggregate.iter().next().unwrap();
+            let (function, column) = inner.iter().next().unwrap();
+            let result = match function.as_str() {
+                "COUNT" => Ok(n),
+                "AVG" => handle_aggregate(|acc, current| acc + current / n, "AVG", &column, &items),
+                "SUM" => handle_aggregate(|acc, current| acc + current, "SUM", &column, &items),
+                "MAX" => handle_aggregate(
+                    |acc, current| std::cmp::max(acc, current),
+                    "MAX",
+                    &column,
+                    &items,
+                ),
+                "MIN" => handle_aggregate(
+                    |acc, current| std::cmp::min(acc, current),
+                    "MIN",
+                    &column,
+                    &items,
+                ),
+                _ => Err(format!("Unknown function {}", function).into()),
+            }?;
+            //group.insert(apply_key, &Num(result));
+        }
+        output.push(group);
+    }
+    Ok(())
 }
 
 fn handle_order(
@@ -219,24 +279,36 @@ pub fn execute_query(
         .map(|filter| parse_filter(&filter))
         .unwrap_or(Box::new(|_| Ok(true)));
 
-    let mut filter_result = vec![];
-    for course in dataset.iter() {
-        if filter(course)? {
-            filter_result.push(course.clone());
-            if filter_result.len() > 5000 {
-                return Err(ResultToLargeError.into());
+    let filter_result = dataset
+        .iter()
+        .filter_map(|item| -> Option<Result<Course, Box<dyn Error>>> {
+            match filter(item) {
+                Ok(true) => Some(Ok(item.clone())),
+                Ok(false) => None,
+                Err(e) => Some(Err(e)),
             }
-        }
-    }
+        })
+        .take(5001)
+        .collect::<Result<Vec<_>, _>>()
+        .and_then(|collected| {
+            if collected.len() > 5000 {
+                Err("Result too large".into())
+            } else {
+                Ok(collected)
+            }
+        })?;
 
-    let mut columns_result = vec![];
-    for course in filter_result.drain(..) {
-        let mut new = BTreeMap::new();
-        for column in query.options.columns.iter() {
-            new.insert(column.clone(), course.get(column)?);
-        }
-        columns_result.push(new);
-    }
+    let mut columns_result = filter_result
+        .into_iter()
+        .map(|course| {
+            query
+                .options
+                .columns
+                .iter()
+                .map(|column| course.get(column).map(|value| (column.clone(), value)))
+                .collect::<Result<BTreeMap<String, Value>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     if let Some(order) = &query.options.order {
         handle_order(order, &mut columns_result)?;
