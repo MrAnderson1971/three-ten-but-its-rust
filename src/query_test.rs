@@ -1,7 +1,7 @@
 use crate::dataset::load_dataset;
 use crate::query::{Filter, Query, execute_query};
 use ordered_float::OrderedFloat;
-use std::collections::HashMap;
+use crate::types::KVPair;
 
 #[test]
 fn test_simple() {
@@ -20,11 +20,10 @@ fn test_simple() {
     }
 } "#;
     let deserialized: Query = serde_json::from_str(&json).unwrap();
-    let expected: HashMap<String, OrderedFloat<f32>> =
-        [("courses_avg".to_string(), OrderedFloat::from(97f32))]
-            .iter()
-            .cloned()
-            .collect();
+    let expected = KVPair {
+        key: "courses_avg".to_string(),
+        value: OrderedFloat::from(97f32),
+    };
     let actual = match deserialized.r#where.as_ref().unwrap() {
         Filter::GT { gt: g } => g,
         _ => panic!("not gt"),

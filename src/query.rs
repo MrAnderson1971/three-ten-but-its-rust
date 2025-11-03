@@ -1,10 +1,11 @@
 use crate::dataset::Value::{Num, Str};
 use crate::dataset::{Course, EPSILON, Value};
+use crate::types::KVPair;
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use serde::Deserialize;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::BTreeMap;
 use std::error::Error;
 
 type FilterFunc<'a> = Box<dyn Fn(&Course) -> Result<bool, Box<dyn Error>> + 'a>;
@@ -21,7 +22,7 @@ pub struct Query {
 #[serde(rename_all = "UPPERCASE")]
 pub struct Transformations {
     pub group: Vec<String>,
-    pub apply: Vec<HashMap<String, HashMap<String, String>>>,
+    pub apply: Vec<KVPair<KVPair<String>>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -56,19 +57,19 @@ pub enum Filter {
     },
     LT {
         #[serde(rename = "LT")]
-        lt: HashMap<String, OrderedFloat<f32>>,
+        lt: KVPair<OrderedFloat<f32>>,
     },
     GT {
         #[serde(rename = "GT")]
-        gt: HashMap<String, OrderedFloat<f32>>,
+        gt: KVPair<OrderedFloat<f32>>,
     },
     EQ {
         #[serde(rename = "EQ")]
-        eq: HashMap<String, OrderedFloat<f32>>,
+        eq: KVPair<OrderedFloat<f32>>,
     },
     IS {
         #[serde(rename = "IS")]
-        is: HashMap<String, String>,
+        is: KVPair<String>,
     },
 }
 
@@ -97,12 +98,15 @@ fn parse_or(or: &'_ Vec<Filter>) -> FilterFunc<'_> {
 }
 
 fn parse_comparison(
-    args: &HashMap<String, OrderedFloat<f32>>,
+    args: &KVPair<OrderedFloat<f32>>,
     course: &Course,
     predicate: impl FnOnce(OrderedFloat<f32>, OrderedFloat<f32>) -> bool,
     op: &'static str,
 ) -> Result<bool, Box<dyn Error>> {
-    let (col, val) = args.iter().next().unwrap();
+    let KVPair {
+        key: col,
+        value: val,
+    } = args;
     match course.get(col) {
         Ok(Num(i)) => Ok(predicate(i, *val)),
         Ok(_) => Err(format!("Operation {} is not valid for {}", op, col).into()),
@@ -125,7 +129,10 @@ fn parse_filter(filter: &'_ Filter) -> FilterFunc<'_> {
             parse_comparison(&eq, &course, |a, b| (a - b).abs() < EPSILON, "eq")
         }),
         Filter::IS { is } => Box::new(move |course| {
-            let (col, val) = is.iter().next().unwrap();
+            let KVPair {
+                key: col,
+                value: val,
+            } = is;
             match course.get(col) {
                 Ok(Str(s)) => Ok(s == *val),
                 Ok(_) => Err(format!(r#"Operation "is" is not valid for {}"#, col).into()),
@@ -186,8 +193,14 @@ fn handle_transformations(
     for (mut group, items) in grouped.drain() {
         let n = OrderedFloat(items.len() as f32);
         for aggregate in transformations.apply.iter() {
-            let (apply_key, inner) = aggregate.iter().next().unwrap();
-            let (function, column) = inner.iter().next().unwrap();
+            let KVPair {
+                key: apply_key,
+                value: inner,
+            } = aggregate;
+            let KVPair {
+                key: function,
+                value: column,
+            } = inner;
             let result = match function.as_str() {
                 "COUNT" => Ok(n),
                 "AVG" => handle_aggregate(|acc, current| acc + current / n, "AVG", &column, &items),

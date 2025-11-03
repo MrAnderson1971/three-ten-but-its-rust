@@ -6,6 +6,7 @@ mod dataset;
 mod dataset_test;
 mod query;
 mod testing;
+mod types;
 
 fn main() -> ! {
     let courses = load_dataset("pair.zip").unwrap();
