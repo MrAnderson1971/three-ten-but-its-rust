@@ -1,4 +1,4 @@
-use macros::FieldGetter;
+use macros::Dataset;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -20,7 +20,11 @@ pub(crate) struct CourseFile {
     result: Vec<CourseJson>,
 }
 
-#[derive(Debug, FieldGetter, Clone)]
+pub trait Dataset {
+    fn get(&self, field_name: &str) -> Result<Value, String>;
+}
+
+#[derive(Debug, Dataset, Clone)]
 #[field_prefix("courses_")]
 pub struct Course {
     pub uuid: String,

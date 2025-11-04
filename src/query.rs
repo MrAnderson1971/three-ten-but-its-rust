@@ -1,5 +1,6 @@
+use crate::dataset::Dataset;
 use crate::dataset::Value::{Num, Str};
-use crate::dataset::{Course, EPSILON, Value};
+use crate::dataset::{EPSILON, Value};
 use crate::types::KVPair;
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -8,7 +9,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::error::Error;
 
-type FilterFunc<'a> = Box<dyn Fn(&Course) -> Result<bool, Box<dyn Error>> + 'a>;
+type FilterFunc<'a, D> = Box<dyn Fn(&D) -> Result<bool, Box<dyn Error>> + 'a>;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "UPPERCASE")]
@@ -73,7 +74,7 @@ pub enum Filter {
     },
 }
 
-fn parse_and(and: &'_ Vec<Filter>) -> FilterFunc<'_> {
+fn parse_and<'a, D: Dataset + 'a>(and: &'a Vec<Filter>) -> FilterFunc<'a, D> {
     let filters: Vec<_> = and.iter().map(|filter| parse_filter(filter)).collect();
     Box::new(move |course| {
         Ok(filters
@@ -85,7 +86,7 @@ fn parse_and(and: &'_ Vec<Filter>) -> FilterFunc<'_> {
     })
 }
 
-fn parse_or(or: &'_ Vec<Filter>) -> FilterFunc<'_> {
+fn parse_or<'a, D: Dataset + 'a>(or: &'a Vec<Filter>) -> FilterFunc<'a, D> {
     let filters: Vec<_> = or.iter().map(|filter| parse_filter(filter)).collect();
     Box::new(move |course| {
         Ok(filters
@@ -99,7 +100,7 @@ fn parse_or(or: &'_ Vec<Filter>) -> FilterFunc<'_> {
 
 fn parse_comparison(
     args: &KVPair<OrderedFloat<f32>>,
-    course: &Course,
+    course: &impl Dataset,
     predicate: impl FnOnce(OrderedFloat<f32>, OrderedFloat<f32>) -> bool,
     op: &'static str,
 ) -> Result<bool, Box<dyn Error>> {
@@ -114,19 +115,19 @@ fn parse_comparison(
     }
 }
 
-fn parse_filter(filter: &'_ Filter) -> FilterFunc<'_> {
+fn parse_filter<'a, D: Dataset + 'a>(filter: &'a Filter) -> FilterFunc<'a, D> {
     match filter {
-        Filter::AND { and } => parse_and(and),
-        Filter::OR { or } => parse_or(or),
+        Filter::AND { and } => parse_and::<'a>(and),
+        Filter::OR { or } => parse_or::<'a>(or),
         Filter::NOT { not } => Box::new(|course| Ok(!parse_filter(not)(course)?)),
         Filter::LT { lt } => {
-            Box::new(move |course| parse_comparison(&lt, &course, |a, b| a < b, "lt"))
+            Box::new(move |course| parse_comparison(&lt, course, |a, b| a < b, "lt"))
         }
         Filter::GT { gt } => {
-            Box::new(move |course| parse_comparison(&gt, &course, |a, b| a > b, "gt"))
+            Box::new(move |course| parse_comparison(&gt, course, |a, b| a > b, "gt"))
         }
         Filter::EQ { eq } => Box::new(move |course| {
-            parse_comparison(&eq, &course, |a, b| (a - b).abs() < EPSILON, "eq")
+            parse_comparison(&eq, course, |a, b| (a - b).abs() < EPSILON, "eq")
         }),
         Filter::IS { is } => Box::new(move |course| {
             let KVPair {
@@ -309,9 +310,9 @@ fn handle_order(
     Ok(())
 }
 
-pub fn execute_query(
+pub fn execute_query<D: Dataset>(
     query: &Query,
-    dataset: &Vec<Course>,
+    dataset: &Vec<D>,
 ) -> Result<Vec<BTreeMap<String, Value>>, Box<dyn Error>> {
     let filter = query
         .r#where
@@ -321,12 +322,10 @@ pub fn execute_query(
 
     let filter_result = dataset
         .iter()
-        .filter_map(|item| -> Option<Result<Course, Box<dyn Error>>> {
-            match filter(item) {
-                Ok(true) => Some(Ok(item.clone())),
-                Ok(false) => None,
-                Err(e) => Some(Err(e)),
-            }
+        .filter_map(|item| match filter(item) {
+            Ok(true) => Some(Ok(item.clone())),
+            Ok(false) => None,
+            Err(e) => Some(Err(e)),
         })
         .take(5001)
         .collect::<Result<Vec<_>, _>>()

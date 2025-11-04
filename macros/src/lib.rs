@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
 
-#[proc_macro_derive(FieldGetter, attributes(field_prefix))]
-pub fn field_getter_derive(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Dataset, attributes(field_prefix))]
+pub fn dataset_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
 
@@ -14,9 +14,9 @@ pub fn field_getter_derive(input: TokenStream) -> TokenStream {
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => &fields.named,
-            _ => panic!("FieldGetter only works with named fields"),
+            _ => panic!("Dataset only works with named fields"),
         },
-        _ => panic!("FieldGetter only works with structs"),
+        _ => panic!("Dataset only works with structs"),
     };
 
     // Generate match arms for each field
@@ -38,10 +38,10 @@ pub fn field_getter_derive(input: TokenStream) -> TokenStream {
         }
     });
 
-    // Generate the implementation
+    // Generate the trait implementation
     let expanded = quote! {
-        impl #name {
-            pub fn get(&self, field_name: &str) -> Result<Value, String> {
+        impl Dataset for #name {
+            fn get(&self, field_name: &str) -> Result<Value, String> {
                 match field_name {
                     #(#match_arms)*
                     _ => Err(format!("Field '{}' not found. Fields must start with prefix '{}'", field_name, #prefix)),
@@ -53,7 +53,7 @@ pub fn field_getter_derive(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-// Extract prefix from attributes - Updated for syn 2.0
+// Extract prefix from attributes
 fn extract_prefix(attrs: &[syn::Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path().is_ident("field_prefix") {
