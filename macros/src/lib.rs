@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
+use syn::{Data, DeriveInput, Fields, Type, parse_macro_input};
 
 #[proc_macro_derive(Dataset, attributes(field_prefix))]
 pub fn dataset_derive(input: TokenStream) -> TokenStream {
@@ -38,6 +38,12 @@ pub fn dataset_derive(input: TokenStream) -> TokenStream {
         }
     });
 
+    let all_fields = fields
+        .iter()
+        .map(|field| format!("{}{}", prefix, field.ident.as_ref().unwrap()))
+        .collect::<Vec<String>>();
+    let field_names = all_fields.iter().map(|s| s.as_str());
+
     // Generate the trait implementation
     let expanded = quote! {
         impl Dataset for #name {
@@ -46,6 +52,10 @@ pub fn dataset_derive(input: TokenStream) -> TokenStream {
                     #(#match_arms)*
                     _ => Err(format!("Field '{}' not found. Fields must start with prefix '{}'", field_name, #prefix)),
                 }
+            }
+
+            fn get_all(&self) -> &'static [&'static str] {
+                &[#(#field_names),*]
             }
         }
     };
@@ -65,9 +75,10 @@ fn extract_prefix(attrs: &[syn::Attribute]) -> Option<String> {
             if let Ok(expr) = attr.parse_args::<syn::Expr>() {
                 if let syn::Expr::Assign(assign) = expr {
                     if let syn::Expr::Lit(syn::ExprLit {
-                                              lit: syn::Lit::Str(lit_str),
-                                              ..
-                                          }) = &*assign.right {
+                        lit: syn::Lit::Str(lit_str),
+                        ..
+                    }) = &*assign.right
+                    {
                         return Some(lit_str.value());
                     }
                 }
@@ -78,7 +89,10 @@ fn extract_prefix(attrs: &[syn::Attribute]) -> Option<String> {
 }
 
 // Helper function to generate conversion based on type
-fn generate_conversion(ty: &Type, field_access: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+fn generate_conversion(
+    ty: &Type,
+    field_access: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
     let ty_str = quote!(#ty).to_string();
 
     // Handle different types
@@ -88,9 +102,13 @@ fn generate_conversion(ty: &Type, field_access: proc_macro2::TokenStream) -> pro
         quote! { Value::Num(#field_access) }
     } else if ty_str.contains("f64") {
         quote! { Value::Num(#field_access as f32) }
-    } else if ty_str.contains("i32") || ty_str.contains("u32") ||
-        ty_str.contains("i64") || ty_str.contains("u64") ||
-        ty_str.contains("usize") || ty_str.contains("isize") {
+    } else if ty_str.contains("i32")
+        || ty_str.contains("u32")
+        || ty_str.contains("i64")
+        || ty_str.contains("u64")
+        || ty_str.contains("usize")
+        || ty_str.contains("isize")
+    {
         quote! { Value::Num(#field_access as f32) }
     } else if ty_str.contains("bool") {
         quote! { Value::Str(#field_access.to_string()) }

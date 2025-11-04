@@ -22,6 +22,7 @@ pub(crate) struct CourseFile {
 
 pub trait Dataset {
     fn get(&self, field_name: &str) -> Result<Value, String>;
+    fn get_all(&self) -> &'static [&'static str];
 }
 
 #[derive(Debug, Dataset, Clone)]

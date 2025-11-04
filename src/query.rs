@@ -4,6 +4,7 @@ use crate::dataset::{EPSILON, Value};
 use crate::types::KVPair;
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
+use regex::Regex;
 use serde::Deserialize;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -14,7 +15,7 @@ type FilterFunc<'a, D> = Box<dyn Fn(&D) -> Result<bool, Box<dyn Error>> + 'a>;
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "UPPERCASE")]
 pub struct Query {
-    pub r#where: Option<Filter>,
+    pub r#where: Filter,
     pub options: Options,
     pub transformations: Option<Transformations>,
 }
@@ -72,6 +73,7 @@ pub enum Filter {
         #[serde(rename = "IS")]
         is: KVPair<String>,
     },
+    EMPTY {},
 }
 
 fn parse_and<'a, D: Dataset + 'a>(and: &'a Vec<Filter>) -> FilterFunc<'a, D> {
@@ -135,11 +137,15 @@ fn parse_filter<'a, D: Dataset + 'a>(filter: &'a Filter) -> FilterFunc<'a, D> {
                 value: val,
             } = is;
             match course.get(col) {
-                Ok(Str(s)) => Ok(s == *val),
+                Ok(Str(s)) => {
+                    let regex = Regex::new(&*s)?;
+                    Ok(regex.is_match(&val))
+                }
                 Ok(_) => Err(format!(r#"Operation "is" is not valid for {}"#, col).into()),
                 Err(_) => Err(format!("Field {} does not exist", col).into()),
             }
         }),
+        Filter::EMPTY {} => Box::new(|_| Ok(true)),
     }
 }
 
@@ -314,16 +320,12 @@ pub fn execute_query<D: Dataset>(
     query: &Query,
     dataset: &Vec<D>,
 ) -> Result<Vec<BTreeMap<String, Value>>, Box<dyn Error>> {
-    let filter = query
-        .r#where
-        .as_ref()
-        .map(|filter| parse_filter(&filter))
-        .unwrap_or(Box::new(|_| Ok(true)));
+    let filter = parse_filter(&query.r#where);
 
-    let filter_result = dataset
-        .iter()
+    let mut filter_result = dataset
+        .into_iter()
         .filter_map(|item| match filter(item) {
-            Ok(true) => Some(Ok(item.clone())),
+            Ok(true) => Some(Ok(item)),
             Ok(false) => None,
             Err(e) => Some(Err(e)),
         })
@@ -333,25 +335,43 @@ pub fn execute_query<D: Dataset>(
             if collected.len() > 5000 {
                 Err("Result too large".into())
             } else {
-                Ok(collected)
+                // turn from Vec<Dataset> into Vec<BTreeMap<String, Value>>
+                Ok(collected
+                    .into_iter()
+                    .map(|item| {
+                        item.get_all()
+                            .iter()
+                            .map(|key| (key.to_string(), item.get(key).unwrap()))
+                            .collect::<BTreeMap<_, _>>()
+                    })
+                    .collect::<Vec<_>>())
             }
         })?;
 
+    if let Some(transform) = &query.transformations {
+        filter_result = handle_transformations(transform, &filter_result)?;
+    }
+
     let mut columns_result = filter_result
         .into_iter()
-        .map(|course| {
-            query
-                .options
-                .columns
-                .iter()
-                .map(|column| course.get(column).map(|value| (column.clone(), value)))
-                .collect::<Result<BTreeMap<String, Value>, _>>()
-        })
+        .map(
+            |course| -> Result<BTreeMap<String, Value>, Box<dyn Error>> {
+                let mut map = BTreeMap::new();
+                for column in &query.options.columns {
+                    map.insert(
+                        column.clone(),
+                        course
+                            .get(column)
+                            .ok_or_else(|| -> Box<dyn Error> {
+                                format!("Unknown column {}", column).into()
+                            })?
+                            .clone(),
+                    );
+                }
+                Ok(map)
+            },
+        )
         .collect::<Result<Vec<_>, _>>()?;
-
-    if let Some(transform) = &query.transformations {
-        columns_result = handle_transformations(transform, &columns_result)?;
-    }
 
     if let Some(order) = &query.options.order {
         handle_order(order, &mut columns_result)?;

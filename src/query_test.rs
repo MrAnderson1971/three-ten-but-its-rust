@@ -1,7 +1,7 @@
 use crate::dataset::load_dataset;
 use crate::query::{Filter, Query, execute_query};
-use ordered_float::OrderedFloat;
 use crate::types::KVPair;
+use ordered_float::OrderedFloat;
 
 #[test]
 fn test_simple() {
@@ -24,8 +24,8 @@ fn test_simple() {
         key: "courses_avg".to_string(),
         value: OrderedFloat::from(97f32),
     };
-    let actual = match deserialized.r#where.as_ref().unwrap() {
-        Filter::GT { gt: g } => g,
+    let actual = match deserialized.r#where {
+        Filter::GT { gt: ref g } => g,
         _ => panic!("not gt"),
     };
     assert_eq!(*actual, expected);
