@@ -151,13 +151,13 @@ macro_rules! sort {
     };
 }
 
-fn handle_aggregate(
+fn compute_aggregate(
+    mut init: OrderedFloat<f32>,
     func: impl Fn(OrderedFloat<f32>, OrderedFloat<f32>) -> OrderedFloat<f32>,
     op: &'static str,
     column: &String,
     data: &Vec<&BTreeMap<String, Value>>,
 ) -> Result<OrderedFloat<f32>, Box<dyn Error>> {
-    let mut init = OrderedFloat(0.0);
     for item in data {
         let Num(num) = item
             .get(column)
@@ -173,7 +173,7 @@ fn handle_aggregate(
 fn handle_transformations(
     transformations: &Transformations,
     columns_result: &Vec<BTreeMap<String, Value>>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<Vec<BTreeMap<String, Value>>, Box<dyn Error>> {
     for column in columns_result.iter() {
         for transformation in transformations.group.iter() {
             if !column.contains_key(transformation) {
@@ -181,49 +181,76 @@ fn handle_transformations(
             }
         }
     }
-    let mut grouped = columns_result.iter().into_group_map_by(|course| {
+    let grouped = columns_result.iter().into_group_map_by(|course| {
         transformations
             .group
             .iter()
-            .map(|group| (group, course.get(group).unwrap()))
+            .map(|group| (group.clone(), course.get(group).unwrap().clone()))
             .collect::<BTreeMap<_, _>>()
     });
 
-    let mut output = vec![];
-    for (mut group, items) in grouped.drain() {
-        let n = OrderedFloat(items.len() as f32);
-        for aggregate in transformations.apply.iter() {
-            let KVPair {
-                key: apply_key,
-                value: inner,
-            } = aggregate;
-            let KVPair {
-                key: function,
-                value: column,
-            } = inner;
-            let result = match function.as_str() {
-                "COUNT" => Ok(n),
-                "AVG" => handle_aggregate(|acc, current| acc + current / n, "AVG", &column, &items),
-                "SUM" => handle_aggregate(|acc, current| acc + current, "SUM", &column, &items),
-                "MAX" => handle_aggregate(
-                    |acc, current| std::cmp::max(acc, current),
-                    "MAX",
-                    &column,
-                    &items,
-                ),
-                "MIN" => handle_aggregate(
-                    |acc, current| std::cmp::min(acc, current),
-                    "MIN",
-                    &column,
-                    &items,
-                ),
-                _ => Err(format!("Unknown function {}", function).into()),
-            }?;
-            //group.insert(apply_key, &Num(result));
-        }
-        output.push(group);
-    }
-    Ok(())
+    // Apply aggregates to each group
+    grouped
+        .into_iter()
+        .map(|(group_keys, items)| {
+            let n = OrderedFloat(items.len() as f32);
+
+            // Compute all aggregates and add to group result
+            transformations
+                .apply
+                .iter()
+                .try_fold(group_keys, |mut acc, aggregate| {
+                    let KVPair {
+                        key: apply_key,
+                        value: inner,
+                    } = aggregate;
+                    let KVPair {
+                        key: function,
+                        value: column,
+                    } = inner;
+
+                    let result = match function.as_str() {
+                        "COUNT" => Ok(Num(n)),
+                        "AVG" => compute_aggregate(
+                            OrderedFloat(0.0),
+                            |acc, val| acc + val / n,
+                            "avg",
+                            column,
+                            &items,
+                        )
+                        .map(|v| Num(v)),
+                        "SUM" => compute_aggregate(
+                            OrderedFloat(0.0),
+                            |acc, val| acc + val,
+                            "sum",
+                            column,
+                            &items,
+                        )
+                        .map(|v| Num(v)),
+                        "MAX" => compute_aggregate(
+                            OrderedFloat(f32::NEG_INFINITY),
+                            |acc, val| std::cmp::max(acc, val),
+                            "max",
+                            column,
+                            &items,
+                        )
+                        .map(|v| Num(v)),
+                        "MIN" => compute_aggregate(
+                            OrderedFloat(f32::INFINITY),
+                            |acc, val| std::cmp::min(acc, val),
+                            "min",
+                            column,
+                            &items,
+                        )
+                        .map(|v| Num(v)),
+                        _ => Err(format!("Unknown function {}", function).into()),
+                    }?;
+
+                    acc.insert(apply_key.clone(), result);
+                    Ok(acc)
+                })
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()
 }
 
 fn handle_order(
@@ -322,6 +349,10 @@ pub fn execute_query(
                 .collect::<Result<BTreeMap<String, Value>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()?;
+
+    if let Some(transform) = &query.transformations {
+        columns_result = handle_transformations(transform, &columns_result)?;
+    }
 
     if let Some(order) = &query.options.order {
         handle_order(order, &mut columns_result)?;
