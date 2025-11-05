@@ -26,7 +26,7 @@ pub trait Dataset {
 }
 
 #[derive(Debug, Dataset, Clone)]
-#[field_prefix("courses_")]
+#[field_prefix("sections_")]
 pub struct Course {
     pub uuid: String,
     pub id: String,

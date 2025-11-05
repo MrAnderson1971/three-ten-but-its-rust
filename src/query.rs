@@ -32,7 +32,6 @@ pub struct Transformations {
 #[serde(rename_all = "UPPERCASE")]
 pub struct Options {
     pub columns: Vec<String>,
-    #[serde(flatten)]
     pub order: Option<Order>,
 }
 
@@ -339,27 +338,25 @@ pub fn execute_query<D: Dataset>(
                 Err(e) => Some(Err(e)),
             }
         })
-        .take(5001) // one more to detect overflow
         .collect::<anyhow::Result<Vec<_>>>()
         .and_then(|collected| {
-            if collected.len() > 5000 {
-                Err(anyhow!("Result too large"))
-            } else {
-                // turn from Vec<Dataset> into Vec<BTreeMap<String, Value>>
-                Ok(collected
-                    .into_iter()
-                    .map(|item| {
-                        item.get_all()
-                            .iter()
-                            .map(|key| (key.to_string(), item.get(key).unwrap()))
-                            .collect::<BTreeMap<_, _>>()
-                    })
-                    .collect::<Vec<_>>())
-            }
+            Ok(collected
+                .into_iter()
+                .map(|item| {
+                    item.get_all()
+                        .iter()
+                        .map(|key| (key.to_string(), item.get(key).unwrap()))
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .collect::<Vec<_>>())
         })?;
 
     if let Some(transform) = &query.transformations {
         filter_result = handle_transformations(transform, &filter_result)?;
+    }
+
+    if filter_result.len() > 5000 {
+        return Err(anyhow!("Result too large"));
     }
 
     let mut columns_result = filter_result

@@ -13,7 +13,7 @@ mod query;
 mod testing;
 mod types;
 
-static COURSES: LazyLock<Vec<Course>, fn() -> Vec<Course>> =
+static SECTIONS: LazyLock<Vec<Course>, fn() -> Vec<Course>> =
     LazyLock::new(|| load_dataset("pair.zip").unwrap());
 
 const PORT: i32 = 310;
@@ -26,7 +26,7 @@ async fn query_courses(
 
     match serde_json::from_str::<Query>(&json) {
         Ok(query) => {
-            let result = execute_query(&query, &COURSES);
+            let result = execute_query(&query, &SECTIONS);
             println!("{:#?}", result);
             let query_result = match result {
                 Ok(ok) => QueryResult::OK { result: ok },
@@ -49,7 +49,7 @@ async fn query_courses(
 async fn main() {
     let app = Router::new()
         .route("/", get(|| async { "Hello, world!" }))
-        .route("/courses", get(query_courses))
+        .route("/sections", get(query_courses))
         .layer(CorsLayer::new().allow_origin("*".parse::<axum::http::HeaderValue>().unwrap()));
 
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", PORT))

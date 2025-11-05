@@ -1,7 +1,7 @@
 use crate::dataset::{Value, load_dataset};
 use crate::query::{Query, execute_query};
 use serde::Deserialize;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
 #[derive(Deserialize)]
