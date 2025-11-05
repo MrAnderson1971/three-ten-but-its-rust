@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use std::sync::LazyLock;
+use tower_http::cors::CorsLayer;
 
 mod dataset;
 mod dataset_test;
@@ -48,7 +49,8 @@ async fn query_courses(
 async fn main() {
     let app = Router::new()
         .route("/", get(|| async { "Hello, world!" }))
-        .route("/courses", get(query_courses));
+        .route("/courses", get(query_courses))
+        .layer(CorsLayer::new().allow_origin("*".parse::<axum::http::HeaderValue>().unwrap()));
 
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", PORT))
         .await
