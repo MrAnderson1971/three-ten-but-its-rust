@@ -64,7 +64,7 @@ struct CourseJson {
     audit: f32,
 }
 
-pub fn load_dataset(file_name: &str) -> Result<Vec<Course>, io::Error> {
+pub fn load_dataset(file_name: &str) -> io::Result<Vec<Course>> {
     let file = File::open(file_name)?;
     let mut archive = ZipArchive::new(file)?;
     let mut dataset = vec![];

@@ -2,15 +2,16 @@ use crate::dataset::Dataset;
 use crate::dataset::Value::{Num, Str};
 use crate::dataset::{EPSILON, Value};
 use crate::types::KVPair;
+use anyhow::anyhow;
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use regex::Regex;
 use serde::Deserialize;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
-use std::error::Error;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{LazyLock, Mutex};
 
-type FilterFunc<'a, D> = Box<dyn Fn(&D) -> Result<bool, Box<dyn Error>> + 'a>;
+type FilterFunc<'a, D> = Box<dyn Fn(&D) -> anyhow::Result<bool> + 'a>;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "UPPERCASE")]
@@ -105,17 +106,22 @@ fn parse_comparison(
     course: &impl Dataset,
     predicate: impl FnOnce(OrderedFloat<f32>, OrderedFloat<f32>) -> bool,
     op: &'static str,
-) -> Result<bool, Box<dyn Error>> {
+) -> anyhow::Result<bool> {
     let KVPair {
         key: col,
         value: val,
     } = args;
     match course.get(col) {
         Ok(Num(i)) => Ok(predicate(i, *val)),
-        Ok(_) => Err(format!("Operation {} is not valid for {}", op, col).into()),
-        Err(_) => Err(format!("Field {} does not exist", col).into()),
+        Ok(_) => Err(anyhow!("Operation {} is not valid for {}", op, col)),
+        Err(_) => Err(anyhow!("Field {} does not exist", col)),
     }
 }
+
+static REGEX_CACHE: LazyLock<
+    Mutex<HashMap<String, Result<Regex, regex::Error>>>,
+    fn() -> Mutex<HashMap<String, Result<Regex, regex::Error>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::<String, Result<Regex, regex::Error>>::new()));
 
 fn parse_filter<'a, D: Dataset + 'a>(filter: &'a Filter) -> FilterFunc<'a, D> {
     match filter {
@@ -138,11 +144,16 @@ fn parse_filter<'a, D: Dataset + 'a>(filter: &'a Filter) -> FilterFunc<'a, D> {
             } = is;
             match course.get(col) {
                 Ok(Str(s)) => {
-                    let regex = Regex::new(&*s)?;
-                    Ok(regex.is_match(&val))
+                    let mut cache = REGEX_CACHE.lock().unwrap();
+                    let regex = cache
+                        .entry(val.clone())
+                        .or_insert_with(|| Regex::new(&format!("^{}$", val)))
+                        .clone()?;
+
+                    Ok(regex.is_match(&s))
                 }
-                Ok(_) => Err(format!(r#"Operation "is" is not valid for {}"#, col).into()),
-                Err(_) => Err(format!("Field {} does not exist", col).into()),
+                Ok(_) => Err(anyhow!(r#"Operation "is" is not valid for {}"#, col)),
+                Err(_) => Err(anyhow!("Field {} does not exist", col)),
             }
         }),
         Filter::EMPTY {} => Box::new(|_| Ok(true)),
@@ -164,13 +175,13 @@ fn compute_aggregate(
     op: &'static str,
     column: &String,
     data: &Vec<&BTreeMap<String, Value>>,
-) -> Result<OrderedFloat<f32>, Box<dyn Error>> {
+) -> anyhow::Result<OrderedFloat<f32>> {
     for item in data {
         let Num(num) = item
             .get(column)
-            .ok_or_else(|| format!("Column {} does not exist", column))?
+            .ok_or_else(|| anyhow!("Column {} does not exist", column))?
         else {
-            return Err(format!("Invalid operation {} on column {}", op, column).into());
+            return Err(anyhow!("Invalid operation {} on column {}", op, column));
         };
         init = func(init, *num)
     }
@@ -180,11 +191,11 @@ fn compute_aggregate(
 fn handle_transformations(
     transformations: &Transformations,
     columns_result: &Vec<BTreeMap<String, Value>>,
-) -> Result<Vec<BTreeMap<String, Value>>, Box<dyn Error>> {
+) -> anyhow::Result<Vec<BTreeMap<String, Value>>> {
     for column in columns_result.iter() {
         for transformation in transformations.group.iter() {
             if !column.contains_key(transformation) {
-                return Err(format!("Unknown group {}", transformation).into());
+                return Err(anyhow!("Unknown group {}", transformation));
             }
         }
     }
@@ -217,59 +228,56 @@ fn handle_transformations(
                     } = inner;
 
                     let result = match function.as_str() {
-                        "COUNT" => Ok(Num(n)),
+                        "COUNT" => Ok(n),
                         "AVG" => compute_aggregate(
                             OrderedFloat(0.0),
                             |acc, val| acc + val / n,
                             "avg",
                             column,
                             &items,
-                        )
-                        .map(|v| Num(v)),
+                        ),
                         "SUM" => compute_aggregate(
                             OrderedFloat(0.0),
                             |acc, val| acc + val,
                             "sum",
                             column,
                             &items,
-                        )
-                        .map(|v| Num(v)),
+                        ),
                         "MAX" => compute_aggregate(
                             OrderedFloat(f32::NEG_INFINITY),
                             |acc, val| std::cmp::max(acc, val),
                             "max",
                             column,
                             &items,
-                        )
-                        .map(|v| Num(v)),
+                        ),
                         "MIN" => compute_aggregate(
                             OrderedFloat(f32::INFINITY),
                             |acc, val| std::cmp::min(acc, val),
                             "min",
                             column,
                             &items,
-                        )
-                        .map(|v| Num(v)),
-                        _ => Err(format!("Unknown function {}", function).into()),
-                    }?;
+                        ),
+                        _ => Err(anyhow!("Unknown function {}", function)),
+                    }
+                    .map(|result| Num(OrderedFloat::from((result * 100.0).round() / 100.0)))?;
 
                     acc.insert(apply_key.clone(), result);
                     Ok(acc)
                 })
         })
-        .collect::<Result<Vec<_>, Box<dyn Error>>>()
+        .collect::<anyhow::Result<Vec<_>>>()
 }
 
 fn handle_order(
     order: &Order,
     columns_result: &mut Vec<BTreeMap<String, Value>>,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     match order {
         Order::ONE(order) => {
             let all_have_column = columns_result.iter().all(|row| row.contains_key(order));
 
             if !all_have_column {
-                return Err(format!("Order column '{}' not found in results", order).into());
+                return Err(anyhow!("Order column '{}' not found in results", order));
             }
             columns_result.sort_by(|a, b| sort!(order, a, b));
         }
@@ -278,13 +286,13 @@ fn handle_order(
                 "UP" => false,
                 "DOWN" => true,
                 _ => {
-                    return Err(format!("Invalid ordering {}, expected UP or DOWN", dir).into());
+                    return Err(anyhow!("Invalid ordering {}, expected UP or DOWN", dir));
                 }
             };
             for key in keys.iter() {
                 for row in columns_result.iter() {
                     if !row.contains_key(key) {
-                        return Err(format!("Key {} not found", key).into());
+                        return Err(anyhow!("Key {} not found", key));
                     }
                 }
             }
@@ -319,21 +327,23 @@ fn handle_order(
 pub fn execute_query<D: Dataset>(
     query: &Query,
     dataset: &Vec<D>,
-) -> Result<Vec<BTreeMap<String, Value>>, Box<dyn Error>> {
+) -> anyhow::Result<Vec<BTreeMap<String, Value>>> {
     let filter = parse_filter(&query.r#where);
 
     let mut filter_result = dataset
         .into_iter()
-        .filter_map(|item| match filter(item) {
-            Ok(true) => Some(Ok(item)),
-            Ok(false) => None,
-            Err(e) => Some(Err(e)),
+        .filter_map(|item| -> Option<anyhow::Result<_>> {
+            match filter(item) {
+                Ok(true) => Some(Ok(item)),
+                Ok(false) => None,
+                Err(e) => Some(Err(e)),
+            }
         })
-        .take(5001)
-        .collect::<Result<Vec<_>, _>>()
+        .take(5001) // one more to detect overflow
+        .collect::<anyhow::Result<Vec<_>>>()
         .and_then(|collected| {
             if collected.len() > 5000 {
-                Err("Result too large".into())
+                Err(anyhow!("Result too large"))
             } else {
                 // turn from Vec<Dataset> into Vec<BTreeMap<String, Value>>
                 Ok(collected
@@ -354,24 +364,20 @@ pub fn execute_query<D: Dataset>(
 
     let mut columns_result = filter_result
         .into_iter()
-        .map(
-            |course| -> Result<BTreeMap<String, Value>, Box<dyn Error>> {
-                let mut map = BTreeMap::new();
-                for column in &query.options.columns {
-                    map.insert(
-                        column.clone(),
-                        course
-                            .get(column)
-                            .ok_or_else(|| -> Box<dyn Error> {
-                                format!("Unknown column {}", column).into()
-                            })?
-                            .clone(),
-                    );
-                }
-                Ok(map)
-            },
-        )
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|course| -> anyhow::Result<BTreeMap<String, Value>> {
+            let mut map = BTreeMap::new();
+            for column in &query.options.columns {
+                map.insert(
+                    column.clone(),
+                    course
+                        .get(column)
+                        .ok_or_else(|| anyhow!("Unknown column {}", column))?
+                        .clone(),
+                );
+            }
+            Ok(map)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     if let Some(order) = &query.options.order {
         handle_order(order, &mut columns_result)?;

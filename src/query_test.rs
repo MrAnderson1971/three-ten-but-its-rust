@@ -2,6 +2,7 @@ use crate::dataset::load_dataset;
 use crate::query::{Filter, Query, execute_query};
 use crate::types::KVPair;
 use ordered_float::OrderedFloat;
+use regex::Regex;
 
 #[test]
 fn test_simple() {
@@ -141,4 +142,11 @@ fn test_unknown_fields() {
     "HAVING": "blank"
 } "#;
     serde_json::from_str::<Query>(&json).unwrap();
+}
+
+#[test]
+fn test_regex() {
+    let pattern = "c.*".to_string();
+    let regex = Regex::new(&*format!("^{}$", pattern)).unwrap();
+    assert!(regex.is_match("cpsc"));
 }
