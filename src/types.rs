@@ -1,5 +1,6 @@
-use serde::{Deserialize, Deserializer};
-use std::collections::HashMap;
+use crate::dataset::Value;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, PartialEq)]
 pub struct KVPair<T> {
@@ -27,4 +28,15 @@ where
         let (key, value) = map.into_iter().next().unwrap();
         Ok(KVPair { key, value })
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum QueryResult {
+    OK {
+        result: Vec<BTreeMap<String, Value>>,
+    },
+    ERROR {
+        error: String,
+    },
 }
