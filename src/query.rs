@@ -14,7 +14,7 @@ use std::sync::{LazyLock, Mutex};
 type FilterFunc<'a, D> = Box<dyn Fn(&D) -> anyhow::Result<bool> + 'a>;
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "UPPERCASE")]
+#[serde(rename_all = "UPPERCASE", deny_unknown_fields)]
 pub struct Query {
     pub r#where: Filter,
     pub options: Options,
@@ -22,28 +22,28 @@ pub struct Query {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "UPPERCASE")]
+#[serde(rename_all = "UPPERCASE", deny_unknown_fields)]
 pub struct Transformations {
     pub group: Vec<String>,
     pub apply: Vec<KVPair<KVPair<String>>>,
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "UPPERCASE")]
+#[serde(rename_all = "UPPERCASE", deny_unknown_fields)]
 pub struct Options {
     pub columns: Vec<String>,
     pub order: Option<Order>,
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum Order {
     ONE(String),
     MANY { dir: String, keys: Vec<String> },
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum Filter {
     AND {
         #[serde(rename = "AND")]
