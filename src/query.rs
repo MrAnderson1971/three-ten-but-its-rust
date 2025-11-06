@@ -1,7 +1,5 @@
-use crate::dataset::Dataset;
-use crate::dataset::Value::{Num, Str};
-use crate::dataset::{EPSILON, Value};
-use crate::types::KVPair;
+use crate::dataset::{EPSILON};
+use crate::types::{Dataset, KVPair, Value};
 use anyhow::anyhow;
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -10,6 +8,7 @@ use serde::Deserialize;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{LazyLock, Mutex};
+use crate::types::Value::{Num, Str};
 
 type FilterFunc<'a, D> = Box<dyn Fn(&D) -> anyhow::Result<bool> + 'a>;
 

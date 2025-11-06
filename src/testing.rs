@@ -1,8 +1,9 @@
-use crate::dataset::{Value, load_dataset};
+use crate::dataset::load_dataset;
 use crate::query::{Query, execute_query};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use crate::types::Value;
 
 #[derive(Deserialize)]
 pub struct Test {
@@ -34,9 +35,9 @@ fn folder_test() {
                         panic!("Expected item not found in actual results");
                     }
                 }
-            },
+            }
             Err(_) if !test_case.is_query_valid => {}
-            _ => panic!("fail")
+            _ => panic!("fail"),
         }
     }
 }

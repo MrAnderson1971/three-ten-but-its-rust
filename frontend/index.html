@@ -11,11 +11,12 @@
     </style>
 </head>
 <body>
-<p>fuck you, there is no UX</p>
+<p>i lied, there is no UX</p>
 
 <textarea id="query-input" placeholder=''></textarea>
 
-<button id="submit-btn">Submit Query</button>
+<button id="submit-btn">Query Sections</button>
+<button id="query-rooms">Query Rooms</button>
 
 <div id="result"></div>
 
@@ -32,13 +33,17 @@
         }
     });
 
-    // Allow Enter key to submit (Shift+Enter for newline)
-    document.getElementById('query-input').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            document.getElementById('submit-btn').click();
+    document.getElementById('query-rooms').addEventListener('click', async () => {
+        const queryInput = document.getElementById('query-input').value;
+        const resultDiv = document.getElementById('result');
+
+        try {
+            const response = await fetch(`http://127.0.0.1:310/rooms?q=${encodeURIComponent(queryInput)}`);
+            resultDiv.textContent = await response.text();
+        } catch (error) {
+            resultDiv.textContent = `${error.message}`;
         }
-    });
+    })
 </script>
 </body>
 </html>

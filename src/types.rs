@@ -1,6 +1,18 @@
-use crate::dataset::Value;
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashMap};
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[serde(untagged)]
+pub enum Value {
+    Num(OrderedFloat<f32>),
+    Str(String),
+}
+
+pub trait Dataset {
+    fn get(&self, field_name: &str) -> Result<Value, String>;
+    fn get_all(&self) -> &'static [&'static str];
+}
 
 #[derive(Debug, PartialEq)]
 pub struct KVPair<T> {

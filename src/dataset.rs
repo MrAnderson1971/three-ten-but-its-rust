@@ -1,6 +1,8 @@
+use crate::types::Dataset;
+use crate::types::Value;
 use macros::Dataset;
 use ordered_float::OrderedFloat;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::fs::File;
 use std::io;
 use std::io::Read;
@@ -8,26 +10,14 @@ use zip::ZipArchive;
 
 pub const EPSILON: f32 = 1e-4;
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
-#[serde(untagged)]
-pub enum Value {
-    Num(OrderedFloat<f32>),
-    Str(String),
-}
-
 #[derive(Debug, Deserialize)]
-pub(crate) struct CourseFile {
-    result: Vec<CourseJson>,
-}
-
-pub trait Dataset {
-    fn get(&self, field_name: &str) -> Result<Value, String>;
-    fn get_all(&self) -> &'static [&'static str];
+pub(crate) struct SectionFile {
+    result: Vec<SectionJson>,
 }
 
 #[derive(Debug, Dataset, Clone)]
 #[field_prefix("sections_")]
-pub struct Course {
+pub struct Section {
     pub uuid: String,
     pub id: String,
     pub title: String,
@@ -41,7 +31,7 @@ pub struct Course {
 }
 
 #[derive(Deserialize, Debug)]
-struct CourseJson {
+struct SectionJson {
     #[serde(rename = "id")]
     uuid: i32,
     #[serde(rename = "Course")]
@@ -64,7 +54,7 @@ struct CourseJson {
     audit: f32,
 }
 
-pub fn load_dataset(file_name: &str) -> io::Result<Vec<Course>> {
+pub fn load_dataset(file_name: &str) -> io::Result<Vec<Section>> {
     let file = File::open(file_name)?;
     let mut archive = ZipArchive::new(file)?;
     let mut dataset = vec![];
@@ -73,26 +63,26 @@ pub fn load_dataset(file_name: &str) -> io::Result<Vec<Course>> {
         let mut file = archive.by_index(i)?;
         let mut json = String::new();
         file.read_to_string(&mut json)?;
-        let mut course_file: CourseFile = match serde_json::from_str(&json) {
+        let section_file: SectionFile = match serde_json::from_str(&json) {
             Ok(c) => c,
             Err(e) => {
                 println!("Error while parsing {}, {}", file.name(), e);
                 continue;
             }
         };
-        for course in course_file.result.drain(..) {
-            dataset.push(course);
+        for section in section_file.result {
+            dataset.push(section);
         }
     }
 
     Ok(dataset
-        .iter()
-        .map(|course| Course {
+        .into_iter()
+        .map(|course| Section {
             uuid: course.uuid.to_string(),
-            id: course.id.clone(),
-            title: course.title.clone(),
-            instructor: course.instructor.clone(),
-            dept: course.dept.clone(),
+            id: course.id,
+            title: course.title,
+            instructor: course.instructor,
+            dept: course.dept,
             year: course.year.parse().unwrap(),
             avg: OrderedFloat::from(course.avg),
             pass: OrderedFloat::from(course.pass),
